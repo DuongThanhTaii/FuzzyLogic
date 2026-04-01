@@ -5,3 +5,4 @@ scikit-fuzzy
 pydantic
 scipy
 websockets
+packaging
