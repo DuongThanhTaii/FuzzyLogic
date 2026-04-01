@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from "react";
 
-const HEALTH_URL = 'http://localhost:8000/health';
-const POLL_MS    = 3000;
+const HEALTH_URL =
+  (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "") + "/health";
+const POLL_MS = 3000;
 
 export function useBackendHealth() {
   const [online, setOnline] = useState(null); // null=checking, true=online, false=offline
@@ -9,7 +10,9 @@ export function useBackendHealth() {
 
   const check = async () => {
     try {
-      const res = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(2000) });
+      const res = await fetch(HEALTH_URL, {
+        signal: AbortSignal.timeout(2000),
+      });
       setOnline(res.ok);
     } catch {
       setOnline(false);
