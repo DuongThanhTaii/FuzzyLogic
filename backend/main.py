@@ -18,6 +18,6 @@ app.include_router(mf_router,  prefix="/api")
 app.include_router(ws_router)
 
 
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {"status": "ok"}
