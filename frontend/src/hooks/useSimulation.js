@@ -1,6 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-const WS_URL = 'ws://localhost:8000/ws/simulate';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api';
+const DEFAULT_WS_URL = API_BASE_URL
+  .replace(/^http/i, 'ws')
+  .replace(/\/api\/?$/, '/ws/simulate');
+const WS_URL = import.meta.env.VITE_WS_URL || DEFAULT_WS_URL;
 const BATCH_INTERVAL_MS = 200;
 const FIRST_MESSAGE_TIMEOUT_MS = 1500;
 const LOCAL_TICK_MS = 250;
