@@ -5,8 +5,8 @@ import { getMembership, getRules, updateMembership, updateRule } from "../../api
 
 const VARS = [
   { key: "error", label: "Sai số (e)", range: "[-50, 50]" },
-  { key: "delta_error", label: "Độ biến thiên sai số (de)", range: "[-15, 15]" },
-  { key: "infusion_rate", label: "Tốc độ truyền (u)", range: "[0, 50]" },
+  { key: "delta_error", label: "Độ biến thiên sai số (de)", range: "[-10, 10]" },
+  { key: "infusion_rate", label: "Tốc độ truyền (u)", range: "[0, 30]" },
 ];
 
 const TERM_COLORS = {

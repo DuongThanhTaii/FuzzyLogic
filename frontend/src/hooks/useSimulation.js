@@ -34,7 +34,7 @@ function deriveVitals(bis, ce, rate, patientType, disturbance = 0) {
   const base = baselines[patientType] ?? baselines.adult;
   const sedation = clamp((100 - bis) / 100, 0, 1);
   const ceLoad = clamp(ce / 6, 0, 1.3);
-  const rateLoad = clamp(rate / 50, 0, 1.2);
+  const rateLoad = clamp(rate / 30, 0, 1.2);
   const disturbanceLoad = clamp(Math.abs(disturbance) / 20, 0, 1);
 
   const heartRate = clamp(base.hr - 26 * sedation - 10 * ceLoad - 5 * rateLoad + 16 * disturbanceLoad, 35, 140);
@@ -83,7 +83,7 @@ function createLocalSimulation(params, onPoint, onDone) {
 
   let pointIndex = 0;
   let ce = scenario === 'overdose' ? 5.2 : 0;
-  let rate = scenario === 'overdose' ? 45 : scenario === 'induction' ? 40 : 0;
+  let rate = scenario === 'overdose' ? 30 : scenario === 'induction' ? 30 : 0;
   let bis = scenario === 'overdose' ? 14 : 97;
   let prevError = SETPOINT - bis;
   if (scenario === 'resistance') ce = 0.3;
@@ -111,11 +111,11 @@ function createLocalSimulation(params, onPoint, onDone) {
     const deltaError = error - prevError;
 
     if (scenario === 'induction' && pointIndex < 12) {
-      rate = pointIndex < 4 ? 40 : clamp(rate - 4, 18, 40);
+      rate = pointIndex < 4 ? 30 : clamp(rate - 4, 12, 30);
     } else {
-      rate = clamp(rate + (-error * 0.55) + (-deltaError * 0.9), 0, 50);
+      rate = clamp(rate + (-error * 0.55) + (-deltaError * 0.9), 0, 30);
     }
-    if (scenario === 'overdose') rate = clamp(rate + (-error * 0.35) - 6, 0, 45);
+    if (scenario === 'overdose') rate = clamp(rate + (-error * 0.35) - 6, 0, 30);
 
     ce = clamp(ce + (rate / 18 - ce) * 0.16, 0, 8);
     prevError = error;

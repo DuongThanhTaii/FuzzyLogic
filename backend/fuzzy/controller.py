@@ -22,15 +22,15 @@ DEFAULT_MF = {
         "PB": ( 40, 12),
     },
     "delta_error": {
-        "N": (-8, 4),
-        "Z": ( 0, 3),
-        "P": ( 8, 4),
+        "N": (-5, 2.5),
+        "Z": ( 0, 2),
+        "P": ( 5, 2.5),
     },
     "infusion_rate": {
-        "Z": ( 0,   2),
-        "S": (10,   4),
-        "M": (25,   6),
-        "L": (40,   8),
+        "Z": ( 0,   1.5),
+        "S": ( 6,   2.5),
+        "M": (15,   4),
+        "L": (24,   5),
     },
 }
 
@@ -76,8 +76,8 @@ class MamdaniFLC:
     def _build(self):
         # Define universes
         e_universe   = np.linspace(-50, 50, 1000)
-        de_universe  = np.linspace(-15, 15, 1000)
-        u_universe   = np.linspace(0, 50, 1000)
+        de_universe  = np.linspace(-10, 10, 1000)
+        u_universe   = np.linspace(0, 30, 1000)
 
         # Antecedents / Consequent
         self.e_ant  = ctrl.Antecedent(e_universe,  "error")
@@ -105,15 +105,15 @@ class MamdaniFLC:
         self.sim = ctrl.ControlSystemSimulation(self.ctrl_sys)
 
     def compute(self, error: float, delta_error: float) -> float:
-        """Returns infusion rate (ml/hr), clamped to [0, 50]."""
+        """Returns infusion rate (ml/hr), clamped to [0, 30]."""
         e_clipped  = float(np.clip(error,       -50, 50))
-        de_clipped = float(np.clip(delta_error, -15, 15))
+        de_clipped = float(np.clip(delta_error, -10, 10))
         try:
             self.sim.input["error"]       = e_clipped
             self.sim.input["delta_error"] = de_clipped
             self.sim.compute()
             rate = float(self.sim.output["infusion_rate"])
-            return float(np.clip(rate, 0.0, 50.0))
+            return float(np.clip(rate, 0.0, 30.0))
         except Exception:
             return 0.0
 
@@ -127,8 +127,8 @@ class MamdaniFLC:
         result = {}
         universes = {
             "error":         np.linspace(-50, 50, 300).tolist(),
-            "delta_error":   np.linspace(-15, 15, 300).tolist(),
-            "infusion_rate": np.linspace(0, 50, 300).tolist(),
+            "delta_error":   np.linspace(-10, 10, 300).tolist(),
+            "infusion_rate": np.linspace(0, 30, 300).tolist(),
         }
         for var, terms in self.mf_params.items():
             universe = np.array(universes[var])

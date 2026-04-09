@@ -18,6 +18,8 @@ const STATUS_CFG = {
   critical: { text: "NGUY KỊCH", color: "#ef4444", glow: "#ef444488" },
 };
 
+const BIS_SETPOINT = 50;
+
 const DEFAULT_FRAME = {
   bis: null,
   rate: null,
@@ -105,6 +107,13 @@ export default function App() {
   const breathSpeed = clamp(rr / 12, 0.18, 1.45);
   const st = STATUS_CFG[status] ?? STATUS_CFG.awake;
   const isCritical = status === "critical" && isRunning;
+  const errorValue =
+    bis != null ? Number((BIS_SETPOINT - bis).toFixed(3)) : null;
+  const deltaErrorValue =
+    typeof latestFrame?.delta_error === "number"
+      ? Number(latestFrame.delta_error.toFixed(3))
+      : null;
+  const [isFormulaVisible, setIsFormulaVisible] = useState(true);
 
   return (
     <div
@@ -304,6 +313,226 @@ export default function App() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {isFormulaVisible ? (
+          <div
+            style={{
+              position: "absolute",
+              top: 10,
+              right: 14,
+              width: "min(46vw, 500px)",
+              background: "rgba(6,13,26,0.92)",
+              border: "1px solid #2563eb55",
+              borderRadius: 14,
+              padding: "12px 14px",
+              zIndex: 18,
+              backdropFilter: "blur(8px)",
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              boxShadow: "0 12px 26px rgba(2, 6, 23, 0.45)",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div
+                style={{
+                  color: "#93c5fd",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  letterSpacing: 0.3,
+                }}
+              >
+                GIẢI THÍCH ĐIỀU KHIỂN FUZZY (ĐỒNG BỘ MONITOR)
+              </div>
+              <button
+                type="button"
+                title="Ẩn bảng công thức"
+                onClick={() => setIsFormulaVisible(false)}
+                style={{
+                  border: "1px solid #1d4ed866",
+                  borderRadius: 6,
+                  background: "rgba(15,23,42,0.95)",
+                  color: "#bfdbfe",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  width: 30,
+                  height: 22,
+                  cursor: "pointer",
+                  lineHeight: 1,
+                }}
+              >
+                −
+              </button>
+            </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+              gap: 8,
+              marginBottom: 10,
+            }}
+          >
+            {[
+              {
+                label: "BIS",
+                value: bis != null ? bis.toFixed(2) : "--",
+                color: "#67e8f9",
+              },
+              {
+                label: "e",
+                value: errorValue != null ? errorValue.toFixed(3) : "--",
+                color: "#fcd34d",
+              },
+              {
+                label: "Δe",
+                value:
+                  deltaErrorValue != null ? deltaErrorValue.toFixed(3) : "--",
+                color: "#f9a8d4",
+              },
+              {
+                label: "u (ml/hr)",
+                value:
+                  infusionRate != null ? infusionRate.toFixed(3) : "--",
+                color: "#86efac",
+              },
+            ].map((item) => (
+              <div
+                key={item.label}
+                style={{
+                  border: "1px solid #1e3a8a55",
+                  borderRadius: 9,
+                  padding: "7px 8px",
+                  background: "rgba(15,23,42,0.6)",
+                  textAlign: "center",
+                }}
+              >
+                <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 4 }}>
+                  {item.label}
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: item.color }}>
+                  {item.value}
+                </div>
+              </div>
+            ))}
+          </div>
+
+            <div
+              style={{
+                border: "1px solid #1d4ed844",
+                borderRadius: 10,
+                padding: "10px",
+                background: "linear-gradient(180deg, rgba(3,7,18,0.5), rgba(2,6,23,0.8))",
+                color: "#cbd5e1",
+                fontSize: 11,
+                lineHeight: 1.65,
+              }}
+            >
+            <div style={{ color: "#bfdbfe", fontWeight: 700, marginBottom: 5 }}>
+              Công thức giải mờ (centroid):
+            </div>
+            <div
+              style={{
+                color: "#dbeafe",
+                marginBottom: 8,
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 14,
+                flexWrap: "wrap",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span>u*</span>
+                <span>=</span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    flexDirection: "column",
+                    minWidth: 168,
+                    textAlign: "center",
+                  }}
+                >
+                  <span style={{ borderBottom: "1px solid #93c5fd99", paddingBottom: 2 }}>
+                    ∫ μ(u) · u du
+                  </span>
+                  <span style={{ paddingTop: 2 }}>∫ μ(u) du</span>
+                </span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#93c5fd" }}>
+                <span>=</span>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    flexDirection: "column",
+                    minWidth: 214,
+                    textAlign: "center",
+                  }}
+                >
+                  <span style={{ borderBottom: "1px solid #93c5fd99", paddingBottom: 2 }}>
+                    ∫ μ(u|e={errorValue != null ? errorValue.toFixed(3) : "--"}, Δe={deltaErrorValue != null ? deltaErrorValue.toFixed(3) : "--"}) · u du
+                  </span>
+                  <span style={{ paddingTop: 2 }}>
+                    ∫ μ(u|e={errorValue != null ? errorValue.toFixed(3) : "--"}, Δe={deltaErrorValue != null ? deltaErrorValue.toFixed(3) : "--"}) du
+                  </span>
+                </span>
+                <span style={{ color: "#86efac", fontWeight: 800, whiteSpace: "nowrap" }}>
+                  = {infusionRate != null ? infusionRate.toFixed(3) : "--"} ml/hr
+                </span>
+              </div>
+            </div>
+            <div>
+              BIS = {bis != null ? bis.toFixed(2) : "--"}
+            </div>
+            <div>
+              e = {BIS_SETPOINT} - {bis != null ? bis.toFixed(2) : "BIS"} = {errorValue != null ? errorValue.toFixed(3) : "--"}
+            </div>
+            <div>
+              Δe = e(k) - e(k-1) = {deltaErrorValue != null ? deltaErrorValue.toFixed(3) : "--"}
+            </div>
+            <div style={{ marginTop: 4, color: "#dbeafe" }}>
+              u* = F(e, Δe)
+              {" = "}
+              F({errorValue != null ? errorValue.toFixed(3) : "--"}, {deltaErrorValue != null ? deltaErrorValue.toFixed(3) : "--"})
+              {" = "}
+              {infusionRate != null ? infusionRate.toFixed(3) : "--"} ml/hr
+            </div>
+            <div style={{ color: "#86efac", fontWeight: 800, marginTop: 6 }}>
+              Kết quả sau giải mờ: u = {infusionRate != null ? infusionRate.toFixed(3) : "--"} ml/hr
+            </div>
+            </div>
+          </div>
+        ) : (
+          <div
+            style={{
+              position: "absolute",
+              top: 10,
+              right: 14,
+              zIndex: 18,
+              display: "flex",
+              gap: 6,
+            }}
+          >
+            <button
+              type="button"
+              title="Hiện bảng công thức"
+              onClick={() => setIsFormulaVisible(true)}
+              style={{
+                border: "1px solid #1d4ed866",
+                borderRadius: 6,
+                background: "rgba(6,13,26,0.92)",
+                color: "#bfdbfe",
+                fontSize: 12,
+                fontWeight: 800,
+                width: 30,
+                height: 22,
+                cursor: "pointer",
+                lineHeight: 1,
+              }}
+            >
+              □
+            </button>
           </div>
         )}
 

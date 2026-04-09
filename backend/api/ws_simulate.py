@@ -67,8 +67,8 @@ async def ws_simulate(websocket: WebSocket):
 
         # ── Scenario-specific pre-conditioning ──────────────────────────────
         if scenario == "overdose":
-            # Pre-load: pump 45 ml/hr for 8 min → Ce way above EC50 → BIS < 20
-            _pre_charge_plant(plant, 45.0, seconds=8 * 60)
+            # Pre-load: pump 30 ml/hr for 8 min → Ce above EC50 → BIS drops hard
+            _pre_charge_plant(plant, 30.0, seconds=8 * 60)
 
         elif scenario == "resistance":
             # Simulate high EC50: scale the plant's EC50 × 1.8
@@ -84,7 +84,7 @@ async def ws_simulate(websocket: WebSocket):
 
         prev_error = 0.0
         # For overdose start: controller begins at 0, has to recover from low BIS
-        infusion   = 45.0 if scenario == "overdose" else 0.0
+        infusion   = 30.0 if scenario == "overdose" else 0.0
         rng = np.random.default_rng(42)
 
         for step in range(total_steps):
@@ -107,7 +107,7 @@ async def ws_simulate(websocket: WebSocket):
 
             # Induction scenario: override to high rate for first 3 min
             if scenario == "induction" and step < 180:
-                infusion = 40.0 if step < 60 else flc.compute(error, delta_e)
+                infusion = 30.0 if step < 60 else flc.compute(error, delta_e)
             else:
                 infusion = flc.compute(error, delta_e)
 

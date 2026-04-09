@@ -176,7 +176,7 @@ def calculate_clinical_vitals(
 
     sedation = np.clip((100.0 - bis) / 100.0, 0.0, 1.0)
     ce_load = np.clip(ce / 6.0, 0.0, 1.3)
-    infusion_load = np.clip(infusion_ml_hr / 50.0, 0.0, 1.2)
+    infusion_load = np.clip(infusion_ml_hr / 30.0, 0.0, 1.2)
     disturbance_load = np.clip(abs(disturbance) / 20.0, 0.0, 1.0)
 
     heart_rate = (
