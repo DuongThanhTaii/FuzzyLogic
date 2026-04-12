@@ -22,12 +22,41 @@ SETPOINT    = 50.0
 DT_S        = 1.0
 STREAM_EVERY = 5           # emit 1 point per 5 sim-seconds
 STREAM_DELAY = STREAM_EVERY * DT_S / 20.0  # 20× speed → ~0.25 s/point
+RESISTANCE_EC50_MULT = 1.8
+
+# Scenario-specific pharmacologic calibration after moving infusion range to 0-30 ml/hr.
+# These values keep each demo scenario aligned with its narrative.
+SCENARIO_DENSITY_MG_ML = {
+    "robustness": 42.0,
+    "disturbance": 42.0,
+    "overdose": 38.0,
+    "resistance": 52.0,
+    "induction": 44.0,
+}
+
+
+def _demo_speed_factor(duration_min: float, scenario: str) -> float:
+    """Speed up PK/PD response for short demos so BIS changes are visible in 5-minute runs."""
+    if scenario == "overdose":
+        return 1.0
+    dur = max(1.0, float(duration_min))
+    # duration=10 -> 1.0x, duration=5 -> 2.0x
+    return float(np.clip(10.0 / dur, 1.0, 2.0))
 
 
 def _pre_charge_plant(plant, infusion_ml_hr: float, seconds: int):
     """Advance plant N seconds at fixed infusion without recording — simulates pre-op drug."""
     for _ in range(seconds):
         plant.step(infusion_ml_hr)
+
+
+def _set_overdose_state(plant, target_ce: float = 6.0):
+    """
+    Force an overdose-like initial PK/PD state so first BIS is in deep/critical range.
+    This avoids the previous under-dosed precharge that still produced BIS > 90.
+    """
+    ce0 = float(target_ce)
+    plant.state = np.array([ce0 * 1.05, ce0 * 0.9, ce0 * 0.7, ce0], dtype=float)
 
 
 def _get_scenario_event(scenario: str, step: int, dist_start: int):
@@ -46,6 +75,71 @@ def _get_scenario_event(scenario: str, step: int, dist_start: int):
     if scenario == "resistance" and step == 0:
         return "resistance_detected"
     return None
+
+
+def _scenario_scaled_inputs(scenario: str, error: float, delta_e: float, disturbance: float):
+    """Scale controller inputs per scenario to keep BIS response clinically plausible."""
+    e_in = error
+    de_in = delta_e
+
+    if scenario == "resistance":
+        # Resistance needs stronger corrective action because EC50 is shifted right.
+        e_in *= 1.70
+        de_in *= 1.35
+    elif scenario == "robustness":
+        # Slightly stronger action to ensure convergence around BIS target in demo duration.
+        e_in *= 1.20
+        de_in *= 1.10
+    elif scenario == "induction":
+        # Induction should drop BIS quickly then switch to maintenance.
+        e_in *= 1.25
+        de_in *= 1.10
+    elif scenario == "disturbance" and abs(disturbance) > 0.0:
+        # Slightly amplify dynamic response during surgical interference.
+        e_in *= 1.15
+        de_in *= 1.25
+
+    return e_in, de_in
+
+
+def _scenario_rate_guard(scenario: str, step: int, bis: float, infusion: float, dist_start: int):
+    """Apply safety/phase guards to the commanded infusion rate."""
+    rate = float(np.clip(infusion, 0.0, 30.0))
+
+    if scenario == "induction":
+        # Fast induction, then taper to maintenance to avoid prolonged deep hypnosis.
+        if step < 90 and bis > 62:
+            return 30.0
+        if step < 210 and bis > 55:
+            return max(rate, 16.0)
+
+    if scenario == "disturbance":
+        # During early disturbance burst, keep enough support so BIS can recover.
+        if dist_start <= step < dist_start + 120 and bis > 62:
+            return max(rate, 16.0)
+
+    if scenario == "overdose":
+        # In overdose rescue, keep pump off until BIS exits dangerous range,
+        # then reintroduce cautiously before allowing full closed-loop control.
+        if bis < 35:
+            return 0.0
+        if bis < 45:
+            return min(rate, 8.0)
+        if bis < 55:
+            return min(rate, 18.0)
+
+    if scenario == "resistance" and step < 12 * 60 and bis > 60:
+        # Early minimum support dose helps overcome delayed onset in resistant patients.
+        return max(rate, 18.0)
+
+    if scenario == "resistance":
+        # Once approaching/under target, aggressively taper to avoid drifting too deep.
+        if bis < 48:
+            return min(rate, 6.0)
+        if bis < 52:
+            return min(rate, 10.0)
+
+    return rate
 
 
 @router.websocket("/ws/simulate")
@@ -67,12 +161,12 @@ async def ws_simulate(websocket: WebSocket):
 
         # ── Scenario-specific pre-conditioning ──────────────────────────────
         if scenario == "overdose":
-            # Pre-load: pump 30 ml/hr for 8 min → Ce above EC50 → BIS drops hard
-            _pre_charge_plant(plant, 30.0, seconds=8 * 60)
+            # Start from deep anesthesia (BIS < 20) so rescue behavior is visible immediately.
+            _set_overdose_state(plant, target_ce=6.0)
 
         elif scenario == "resistance":
-            # Simulate high EC50: scale the plant's EC50 × 1.8
-            plant.EC50 *= 1.8
+            # Drug resistance per scenario definition: EC50 increases 1.8x.
+            plant.EC50 *= RESISTANCE_EC50_MULT
 
         elif scenario == "induction":
             # Start controller with a small induction boost (higher initial infusion)
@@ -81,10 +175,12 @@ async def ws_simulate(websocket: WebSocket):
         total_steps   = int(duration_min * 60 / DT_S)
         dist_start    = int(dist_time * 60 / DT_S)
         total_stream_points = max(1, (total_steps + STREAM_EVERY - 1) // STREAM_EVERY)
+        base_density = SCENARIO_DENSITY_MG_ML.get(scenario, SCENARIO_DENSITY_MG_ML["robustness"])
+        density_mg_ml = base_density * _demo_speed_factor(duration_min, scenario)
 
         prev_error = 0.0
-        # For overdose start: controller begins at 0, has to recover from low BIS
-        infusion   = 30.0 if scenario == "overdose" else 0.0
+        # Overdose rescue starts with pump OFF; controller should hold/reintroduce cautiously.
+        infusion   = 0.0
         rng = np.random.default_rng(42)
 
         for step in range(total_steps):
@@ -95,21 +191,25 @@ async def ws_simulate(websocket: WebSocket):
             if scenario == "disturbance" and step >= dist_start:
                 # Burst disturbance: intense for first 3 min then moderate
                 burst = 1.8 if step < dist_start + 180 else 0.7
-                disturbance = float(rng.normal(0, dist_amp * 0.35 * burst))
+                disturbance = float(rng.normal(0, dist_amp * 0.22 * burst))
+                disturbance = float(np.clip(disturbance, -dist_amp, dist_amp))
 
             # ── Plant step ──────────────────────────────────────────────────
-            bis_raw = plant.step(infusion)
+            bis_raw = plant.step(infusion, density_mg_ml=density_mg_ml)
             bis     = float(np.clip(bis_raw + disturbance, 0.0, 100.0))
 
             # ── Fuzzy controller ────────────────────────────────────────────
             error   = SETPOINT - bis
             delta_e = (error - prev_error) / DT_S
+            e_in, de_in = _scenario_scaled_inputs(scenario, error, delta_e, disturbance)
 
             # Induction scenario: override to high rate for first 3 min
             if scenario == "induction" and step < 180:
-                infusion = 30.0 if step < 60 else flc.compute(error, delta_e)
+                infusion = 30.0 if step < 45 and bis > 65 else flc.compute(e_in, de_in)
             else:
-                infusion = flc.compute(error, delta_e)
+                infusion = flc.compute(e_in, de_in)
+
+            infusion = _scenario_rate_guard(scenario, step, bis, infusion, dist_start)
 
             prev_error = error
 

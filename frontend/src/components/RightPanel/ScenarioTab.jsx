@@ -61,7 +61,7 @@ export default function ScenarioTab({
   const [patientType, setPatientType] = useState('adult');
   const [scenario, setScenario] = useState('robustness');
   const [duration, setDuration] = useState(30);
-  const [disturbTime, setDisturbTime] = useState(10);
+  const [disturbTime, setDisturbTime] = useState(3);
   const [disturbAmp, setDisturbAmp] = useState(15);
 
   const sc = SCENARIOS.find((s) => s.value === scenario);
@@ -70,12 +70,13 @@ export default function ScenarioTab({
 
   const handleRun = () => {
     if (!canRun) return;
+    const effectiveDisturbTime = Math.min(Number(disturbTime), Math.max(1, Number(duration) - 1));
     onStart({
       patient_type: patientType,
       weight: pt.weight,
       scenario,
       duration,
-      disturbance_time: disturbTime,
+      disturbance_time: effectiveDisturbTime,
       disturbance_amplitude: disturbAmp,
     });
   };

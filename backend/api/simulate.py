@@ -14,6 +14,11 @@ SETPOINT = 50.0   # BIS target
 DT_S = 1.0        # simulation step in seconds
 
 
+def _set_overdose_state(plant, target_ce: float = 6.0):
+    ce0 = float(target_ce)
+    plant.state = np.array([ce0 * 1.05, ce0 * 0.9, ce0 * 0.7, ce0], dtype=float)
+
+
 @router.post("/simulate")
 def run_simulation(req: SimulationRequest):
     flc  = get_flc()
@@ -22,6 +27,11 @@ def run_simulation(req: SimulationRequest):
         weight=req.patient.weight,
         dt=DT_S,
     )
+
+    if req.scenario == "overdose":
+        _set_overdose_state(plant, target_ce=6.0)
+    elif req.scenario == "resistance":
+        plant.EC50 *= 2.6
 
     total_steps = int(req.duration * 60 / DT_S)
     disturbance_start = int(req.disturbance_time * 60 / DT_S)

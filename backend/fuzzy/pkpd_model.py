@@ -107,10 +107,11 @@ class PKPDModel:
 
         return np.array([dC1, dC2, dC3, dCe])
 
-    def step(self, infusion_ml_hr: float, density_mg_ml: float = 10.0) -> float:
+    def step(self, infusion_ml_hr: float, density_mg_ml: float = 16.7) -> float:
         """
         Advance one time step.
         infusion_ml_hr: pump rate in ml/hr
+        density_mg_ml: propofol concentration used for simulation calibration.
         Returns current BIS value.
         """
         # Convert ml/hr → mg/s

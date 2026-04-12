@@ -6,7 +6,8 @@ const DEFAULT_WS_URL = API_BASE_URL
   .replace(/\/api\/?$/, '/ws/simulate');
 const WS_URL = import.meta.env.VITE_WS_URL || DEFAULT_WS_URL;
 const BATCH_INTERVAL_MS = 200;
-const FIRST_MESSAGE_TIMEOUT_MS = 1500;
+const WS_CONNECT_TIMEOUT_MS = 5000;
+const FIRST_MESSAGE_TIMEOUT_MS = 6000;
 const LOCAL_TICK_MS = 250;
 const SETPOINT = 50;
 
@@ -73,6 +74,50 @@ function scenarioEventFor(scenario, step, disturbanceStep) {
   return null;
 }
 
+function scenarioScaledInputs(scenario, error, deltaError, disturbance) {
+  let eIn = error;
+  let deIn = deltaError;
+
+  if (scenario === 'resistance') {
+    eIn *= 1.35;
+    deIn *= 1.2;
+  } else if (scenario === 'disturbance' && Math.abs(disturbance) > 0) {
+    deIn *= 1.15;
+  }
+
+  return { eIn, deIn };
+}
+
+function scenarioRateGuard(scenario, step, bis, rate) {
+  let guarded = clamp(rate, 0, 30);
+
+  if (scenario === 'induction') {
+    if (step < 18 && bis > 62) return 30;
+    if (step < 42 && bis > 55) return Math.max(guarded, 16);
+  }
+
+  if (scenario === 'disturbance') {
+    if (step > 0 && bis > 62) return Math.max(guarded, 16);
+  }
+
+  if (scenario === 'overdose') {
+    if (bis < 35) return 0;
+    if (bis < 45) return Math.min(guarded, 8);
+    if (bis < 55) return Math.min(guarded, 18);
+  }
+
+  if (scenario === 'resistance' && step < 144 && bis > 60) {
+    return Math.max(guarded, 18);
+  }
+
+  if (scenario === 'resistance') {
+    if (bis < 48) return Math.min(guarded, 6);
+    if (bis < 52) return Math.min(guarded, 10);
+  }
+
+  return guarded;
+}
+
 function createLocalSimulation(params, onPoint, onDone) {
   const patientType = params?.patient_type ?? 'adult';
   const scenario = params?.scenario ?? 'robustness';
@@ -80,6 +125,9 @@ function createLocalSimulation(params, onPoint, onDone) {
   const totalPoints = Math.max(1, Math.ceil((durationMin * 60) / 5));
   const disturbanceStep = Math.max(0, Math.floor(((Number(params?.disturbance_time) || 10) * 60) / 5));
   const disturbanceAmp = Number(params?.disturbance_amplitude) || 15;
+  const demoSpeed = scenario === 'overdose'
+    ? 1
+    : clamp(10 / Math.max(1, durationMin), 1, 2);
 
   let pointIndex = 0;
   let ce = scenario === 'overdose' ? 5.2 : 0;
@@ -99,7 +147,7 @@ function createLocalSimulation(params, onPoint, onDone) {
     let disturbance = 0;
     if (scenario === 'disturbance' && pointIndex >= disturbanceStep) {
       const burst = pointIndex < disturbanceStep + 36 ? 1.8 : 0.7;
-      disturbance = (Math.random() - 0.5) * disturbanceAmp * burst;
+      disturbance = clamp((Math.random() - 0.5) * disturbanceAmp * 0.44 * burst, -disturbanceAmp, disturbanceAmp);
     }
 
     const ec50 = scenario === 'resistance' ? 6.1 : 3.4;
@@ -109,15 +157,21 @@ function createLocalSimulation(params, onPoint, onDone) {
 
     const error = SETPOINT - bis;
     const deltaError = error - prevError;
+    const { eIn, deIn } = scenarioScaledInputs(scenario, error, deltaError, disturbance);
 
-    if (scenario === 'induction' && pointIndex < 12) {
-      rate = pointIndex < 4 ? 30 : clamp(rate - 4, 12, 30);
+    if (scenario === 'induction' && pointIndex < 36) {
+      rate = pointIndex < 18 && bis > 62 ? 30 : clamp(rate - 2.2, 12, 30);
     } else {
-      rate = clamp(rate + (-error * 0.55) + (-deltaError * 0.9), 0, 30);
+      rate = clamp(rate + (-eIn * 0.55) + (-deIn * 0.9), 0, 30);
     }
-    if (scenario === 'overdose') rate = clamp(rate + (-error * 0.35) - 6, 0, 30);
+    if (scenario === 'overdose') rate = clamp(rate + (-eIn * 0.35) - 6, 0, 30);
+    rate = scenarioRateGuard(scenario, pointIndex, bis, rate);
 
-    ce = clamp(ce + (rate / 18 - ce) * 0.16, 0, 8);
+    const ceDriveDivisor =
+      scenario === 'resistance' ? 10 : scenario === 'overdose' ? 14 : 11;
+    const ceTrackingBase = scenario === 'induction' ? 0.22 : 0.2;
+    const ceTracking = ceTrackingBase * demoSpeed;
+    ce = clamp(ce + (rate / ceDriveDivisor - ce) * ceTracking, 0, 8);
     prevError = error;
 
     const vitals = deriveVitals(bis, ce, rate, patientType, disturbance);
@@ -161,6 +215,7 @@ export function useSimulation() {
   const bufferRef = useRef([]);
   const timerRef = useRef(null);
   const localStopRef = useRef(null);
+  const connectTimerRef = useRef(null);
   const firstMessageTimerRef = useRef(null);
   const didReceiveFirstMessageRef = useRef(false);
 
@@ -184,6 +239,13 @@ export function useSimulation() {
     }
   }, []);
 
+  const clearConnectTimer = useCallback(() => {
+    if (connectTimerRef.current) {
+      clearTimeout(connectTimerRef.current);
+      connectTimerRef.current = null;
+    }
+  }, []);
+
   const stopLocalSimulation = useCallback(() => {
     if (localStopRef.current) {
       localStopRef.current();
@@ -194,6 +256,7 @@ export function useSimulation() {
   const startLocalFallback = useCallback((params, reason) => {
     safeClose(wsRef.current);
     wsRef.current = null;
+    clearConnectTimer();
     clearFirstMessageTimer();
     stopLocalSimulation();
     setError(reason ? `${reason}\nUsing local simulation in frontend.` : 'Using local simulation in frontend.');
@@ -211,12 +274,13 @@ export function useSimulation() {
         clearFlushTimer();
       },
     );
-  }, [clearFirstMessageTimer, clearFlushTimer, flush, stopLocalSimulation]);
+  }, [clearConnectTimer, clearFirstMessageTimer, clearFlushTimer, flush, stopLocalSimulation]);
 
   const start = useCallback((params) => {
     safeClose(wsRef.current);
     wsRef.current = null;
     stopLocalSimulation();
+    clearConnectTimer();
     clearFirstMessageTimer();
 
     bufferRef.current = [];
@@ -236,17 +300,24 @@ export function useSimulation() {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
-      firstMessageTimerRef.current = setTimeout(() => {
-        if (!didReceiveFirstMessageRef.current) {
-          startLocalFallback(params, 'Backend seems online but no initial stream frame arrived.');
-        }
-      }, FIRST_MESSAGE_TIMEOUT_MS);
+      connectTimerRef.current = setTimeout(() => {
+        startLocalFallback(params, 'WebSocket handshake took too long.');
+      }, WS_CONNECT_TIMEOUT_MS);
 
       ws.onopen = () => {
+        clearConnectTimer();
         ws.send(JSON.stringify(params));
+
+        // Start first-frame timeout only after request is sent.
+        firstMessageTimerRef.current = setTimeout(() => {
+          if (!didReceiveFirstMessageRef.current) {
+            startLocalFallback(params, 'Backend accepted websocket but did not stream first frame in time.');
+          }
+        }, FIRST_MESSAGE_TIMEOUT_MS);
       };
 
       ws.onmessage = (evt) => {
+        clearConnectTimer();
         clearFirstMessageTimer();
         didReceiveFirstMessageRef.current = true;
 
@@ -273,10 +344,12 @@ export function useSimulation() {
       };
 
       ws.onerror = () => {
+        clearConnectTimer();
         startLocalFallback(params, 'Cannot connect to backend websocket.');
       };
 
       ws.onclose = (evt) => {
+        clearConnectTimer();
         if (!evt.wasClean && !didReceiveFirstMessageRef.current) {
           startLocalFallback(params, 'Backend closed websocket before sending data.');
         } else if (!evt.wasClean) {
@@ -284,25 +357,28 @@ export function useSimulation() {
         }
       };
     } catch {
+      clearConnectTimer();
       startLocalFallback(params, 'Browser cannot initialize websocket.');
     }
-  }, [clearFirstMessageTimer, clearFlushTimer, flush, startLocalFallback, stopLocalSimulation]);
+  }, [clearConnectTimer, clearFirstMessageTimer, clearFlushTimer, flush, startLocalFallback, stopLocalSimulation]);
 
   const stop = useCallback(() => {
     safeClose(wsRef.current);
     wsRef.current = null;
     stopLocalSimulation();
+    clearConnectTimer();
     clearFirstMessageTimer();
     flush();
     clearFlushTimer();
     setIsRunning(false);
     setProgress(0);
-  }, [clearFirstMessageTimer, clearFlushTimer, flush, stopLocalSimulation]);
+  }, [clearConnectTimer, clearFirstMessageTimer, clearFlushTimer, flush, stopLocalSimulation]);
 
   const reset = useCallback(() => {
     safeClose(wsRef.current);
     wsRef.current = null;
     stopLocalSimulation();
+    clearConnectTimer();
     clearFirstMessageTimer();
     clearFlushTimer();
     bufferRef.current = [];
@@ -312,14 +388,15 @@ export function useSimulation() {
     setIsRunning(false);
     setProgress(0);
     setDurationMin(0);
-  }, [clearFirstMessageTimer, clearFlushTimer, stopLocalSimulation]);
+  }, [clearConnectTimer, clearFirstMessageTimer, clearFlushTimer, stopLocalSimulation]);
 
   useEffect(() => () => {
     safeClose(wsRef.current);
     stopLocalSimulation();
+    clearConnectTimer();
     clearFirstMessageTimer();
     clearFlushTimer();
-  }, [clearFirstMessageTimer, clearFlushTimer, stopLocalSimulation]);
+  }, [clearConnectTimer, clearFirstMessageTimer, clearFlushTimer, stopLocalSimulation]);
 
   return {
     isRunning,
